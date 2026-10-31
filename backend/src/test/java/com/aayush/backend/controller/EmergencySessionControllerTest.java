@@ -3,7 +3,9 @@ package com.aayush.backend.controller;
 import com.aayush.backend.dto.CreateEmergencySessionRequest;
 import com.aayush.backend.dto.PatientProfileDTO;
 import com.aayush.backend.dto.UpdateSessionStatusRequest;
+import com.aayush.backend.repository.EmergencySessionRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -18,7 +20,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 /**
  * Integration tests for EmergencySessionController
- * Uses Embedded MongoDB (Flapdoodle) for testing without Docker
+ * Uses Docker MongoDB container at localhost:27017 with dedicated test database
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -30,6 +32,15 @@ class EmergencySessionControllerTest {
 
     @Autowired
     private ObjectMapper objectMapper;
+
+    @Autowired
+    private EmergencySessionRepository repository;
+
+    @AfterEach
+    void cleanUp() {
+        // Clean up test data after each test to ensure isolation
+        repository.deleteAll();
+    }
 
     @Test
     void testCreateEmergencySession_Success() throws Exception {
