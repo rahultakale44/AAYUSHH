@@ -1,0 +1,26 @@
+/* AAYUSH - Healthcare Emergency Coordination Platform */
+
+/* Import Premium Design System */
+@import './styles/design-system.css';
+@import './styles/components.css';
+
+/* Legacy support - will be replaced */
+:root {
+  /* Keeping for backwards compatibility during transition */
+  --navy-900: #0f172a;
+  --blue-500: #3b82f6;
+  --red-600: #dc2626;
+  --orange-600: #ea580c;
+  --green-600: #16a34a;
+  --gray-50: #f9fafb;
+  --gray-200: #e5e7eb;
+  --gray-600: #4b5563;
+  --gray-900: #111827;
+  --white: #ffffff;
+  
+  --text-primary: var(--neutral-900, #111827);
+  --text-secondary: var(--neutral-600, #4b5563);
+  --border-color: var(--neutral-200, #e5e7eb);
+  --shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1);
+}

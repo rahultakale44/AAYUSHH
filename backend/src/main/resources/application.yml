@@ -1,0 +1,53 @@
+spring:
+  application:
+    name: aayush-backend
+  
+  # MongoDB Database Configuration
+  data:
+    mongodb:
+      uri: ${MONGODB_URI:mongodb://localhost:27017/aayush_db}
+      # Alternative configuration (if URI not used):
+      # host: ${MONGODB_HOST:localhost}
+      # port: ${MONGODB_PORT:27017}
+      # database: ${MONGODB_DATABASE:aayush_db}
+      # Authentication (if required):
+      # username: ${MONGODB_USERNAME:}
+      # password: ${MONGODB_PASSWORD:}
+      auto-index-creation: true  # Automatically create indexes from @Indexed annotations
+  
+  # Security Configuration
+  security:
+    user:
+      name: ${ADMIN_USER:admin}
+      password: ${ADMIN_PASSWORD:admin123}
+  
+  # Server Configuration
+  server:
+    port: 8080
+    error:
+      include-message: always
+      include-binding-errors: always
+
+# Application-specific Configuration
+aayush:
+  security:
+    jwt:
+      secret-key: ${JWT_SECRET:aayush-demo-secret-key-for-innovatex-2-0-hackathon-2026-change-in-production}
+      expiration-ms: 86400000  # 24 hours
+  
+  # CORS Configuration for frontend
+  cors:
+    allowed-origins: ${CORS_ORIGINS:http://localhost:5173,http://localhost:5174,http://localhost:3000}
+    allowed-methods: GET,POST,PUT,PATCH,DELETE,OPTIONS
+    allowed-headers: "*"
+    allow-credentials: true
+
+# Logging Configuration
+logging:
+  level:
+    com.aayush.backend: DEBUG
+    org.springframework.web: INFO
+    org.springframework.security: DEBUG
+    org.springframework.data.mongodb: DEBUG
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} - %msg%n"

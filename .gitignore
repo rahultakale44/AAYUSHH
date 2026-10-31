@@ -1,0 +1,47 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Vercel
+.vercel
+
+# Environment variables
+.env
+.env.local
+.env.production.local
+.env.development.local
+
+# Backend build files
+backend/target/
+backend/.mvn/wrapper/maven-wrapper.jar
+
+# Backend sensitive files
+backend/**/*.env
+backend/src/main/resources/application-local.yml
+backend/src/main/resources/application-prod.yml
+
+# Database
+*.db
+*.sqlite
+*.sql.backup
