@@ -1,0 +1,22 @@
+# Test Configuration
+# Overrides application.yml for test profile
+
+spring:
+  data:
+    mongodb:
+      uri: mongodb://localhost:27017/aayush_test
+
+# JWT Test Configuration
+aayush:
+  security:
+    jwt:
+      # Test-only secret (different from default)
+      # Meets minimum 32-byte requirement for HS256
+      secret-key: test-jwt-secret-key-for-aayush-unit-tests-minimum-32-bytes-required
+      expiration-ms: 900000  # 15 minutes
+      issuer: aayush-backend-test
+
+logging:
+  level:
+    com.aayush.backend: INFO
+    org.springframework.data.mongodb: WARN

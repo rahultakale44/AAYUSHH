@@ -33,7 +33,8 @@ aayush:
   security:
     jwt:
       secret-key: ${JWT_SECRET:aayush-demo-secret-key-for-innovatex-2-0-hackathon-2026-change-in-production}
-      expiration-ms: 86400000  # 24 hours
+      expiration-ms: 900000  # 15 minutes (900000 ms)
+      issuer: aayush-backend
   
   # CORS Configuration for frontend
   cors:
