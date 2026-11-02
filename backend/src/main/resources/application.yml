@@ -32,7 +32,9 @@ spring:
 aayush:
   security:
     jwt:
-      secret-key: ${JWT_SECRET:aayush-demo-secret-key-for-innovatex-2-0-hackathon-2026-change-in-production}
+      # Production: MUST set JWT_SECRET environment variable (min 32 bytes for HS256)
+      # No fallback secret - application will fail to start if not configured
+      secret-key: ${JWT_SECRET}
       expiration-ms: 900000  # 15 minutes (900000 ms)
       issuer: aayush-backend
   

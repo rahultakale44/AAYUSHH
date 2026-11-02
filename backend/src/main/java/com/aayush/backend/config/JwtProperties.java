@@ -47,12 +47,17 @@ public class JwtProperties {
     /**
      * Validate JWT configuration at startup
      * Ensures secret key is strong enough for HS256
+     * 
+     * Production configuration requires JWT_SECRET environment variable.
+     * Application will fail to start if secret is missing, blank, or too weak.
      */
     @PostConstruct
     public void validateConfiguration() {
         if (secretKey == null || secretKey.isBlank()) {
             throw new IllegalStateException(
-                "JWT secret key is not configured. Set JWT_SECRET environment variable or aayush.security.jwt.secret-key property."
+                "JWT secret key is not configured. " +
+                "Production requires JWT_SECRET environment variable. " +
+                "Test profile uses dedicated test secret from application-test.yml."
             );
         }
 
@@ -61,18 +66,10 @@ public class JwtProperties {
         if (secretBytes.length < 32) {
             throw new IllegalStateException(
                 String.format(
-                    "JWT secret key is too weak. HS256 requires at least 256 bits (32 bytes). Current length: %d bytes. " +
-                    "Please provide a stronger secret via JWT_SECRET environment variable.",
+                    "JWT secret key is too weak. HS256 requires at least 256 bits (32 bytes). " +
+                    "Current length: %d bytes. Provide a stronger secret via JWT_SECRET environment variable.",
                     secretBytes.length
                 )
-            );
-        }
-
-        // Warn if using default secret in production-like environment
-        if (secretKey.contains("demo") || secretKey.contains("default") || secretKey.contains("change")) {
-            System.err.println(
-                "WARNING: Using a demo/default JWT secret key. " +
-                "This is insecure for production. Set a strong secret via JWT_SECRET environment variable."
             );
         }
     }
