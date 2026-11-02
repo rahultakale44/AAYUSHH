@@ -61,6 +61,26 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * Handle duplicate user registration exceptions
+     */
+    @ExceptionHandler(DuplicateUserException.class)
+    public ResponseEntity<ErrorResponse> handleDuplicateUserException(
+            DuplicateUserException ex, WebRequest request) {
+        
+        log.warn("Duplicate user registration attempt: {}", ex.getMessage());
+        
+        ErrorResponse error = ErrorResponse.builder()
+                .timestamp(LocalDateTime.now())
+                .status(HttpStatus.CONFLICT.value())
+                .error("Conflict")
+                .message(ex.getMessage())
+                .path(request.getDescription(false).replace("uri=", ""))
+                .build();
+        
+        return new ResponseEntity<>(error, HttpStatus.CONFLICT);
+    }
+
+    /**
      * Handle validation errors
      */
     @ExceptionHandler(MethodArgumentNotValidException.class)
