@@ -645,4 +645,225 @@ class AuthenticationServiceTest {
         // Then
         assertEquals(UserRole.CAREGIVER, response.getRole());
     }
+
+    @Test
+    @DisplayName("Should detect duplicate mobile with different formatting (10-digit vs +91 format)")
+    void testRegister_DuplicateMobile_DifferentFormat() {
+        // Given: User tries to register with "+91 9876543210"
+        // when "9876543210" is already registered (both normalize to "919876543210")
+        RegisterRequest request = RegisterRequest.builder()
+                .fullName("Duplicate Mobile User")
+                .mobile("+91 9876543210")  // With country code
+                .password("SecureP@ss123")
+                .role("SENIOR")
+                .build();
+
+        // This mobile is already in database as "919876543210"
+        when(userRepository.existsByMobile("919876543210")).thenReturn(true);
+
+        // When/Then
+        DuplicateUserException exception = assertThrows(
+            DuplicateUserException.class,
+            () -> authenticationService.register(request)
+        );
+
+        assertEquals("Mobile number is already registered", exception.getMessage());
+    }
+
+    @Test
+    @DisplayName("Should detect duplicate mobile with whitespace and hyphens")
+    void testRegister_DuplicateMobile_WithWhitespaceAndHyphens() {
+        // Given
+        RegisterRequest request = RegisterRequest.builder()
+                .fullName("Format Test User")
+                .mobile(" 98765-43210 ")  // With whitespace and hyphen
+                .password("SecureP@ss123")
+                .role("SENIOR")
+                .build();
+
+        when(userRepository.existsByMobile("919876543210")).thenReturn(true);
+
+        // When/Then
+        DuplicateUserException exception = assertThrows(
+            DuplicateUserException.class,
+            () -> authenticationService.register(request)
+        );
+
+        assertEquals("Mobile number is already registered", exception.getMessage());
+    }
+
+    @Test
+    @DisplayName("Should normalize mobile with 12 digits starting with 91")
+    void testRegister_MobileNormalization_12DigitsWithCountryCode() {
+        // Given
+        RegisterRequest request = RegisterRequest.builder()
+                .fullName("Mobile Test")
+                .mobile("919876543210")  // Already has country code
+                .password("SecureP@ss123")
+                .role("SENIOR")
+                .build();
+
+        when(userRepository.existsByMobile("919876543210")).thenReturn(false);
+        when(passwordService.encodePassword(anyString())).thenReturn("$2a$12$hashedPassword");
+        when(userRepository.save(any(User.class))).thenAnswer(invocation -> {
+            User user = invocation.getArgument(0);
+            user.setId("user123");
+            return user;
+        });
+
+        // When
+        UserResponse response = authenticationService.register(request);
+
+        // Then
+        assertEquals("919876543210", response.getMobile());
+        verify(userRepository).existsByMobile("919876543210");
+    }
+
+    @Test
+    @DisplayName("Should normalize international mobile (non-India)")
+    void testRegister_MobileNormalization_InternationalNumber() {
+        // Given: US number with country code
+        RegisterRequest request = RegisterRequest.builder()
+                .fullName("International User")
+                .mobile("+1 (555) 123-4567")  // US format
+                .password("SecureP@ss123")
+                .role("SENIOR")
+                .build();
+
+        // Normalized to "15551234567" (13 digits)
+        when(userRepository.existsByMobile("15551234567")).thenReturn(false);
+        when(passwordService.encodePassword(anyString())).thenReturn("$2a$12$hashedPassword");
+        when(userRepository.save(any(User.class))).thenAnswer(invocation -> {
+            User user = invocation.getArgument(0);
+            user.setId("user123");
+            return user;
+        });
+
+        // When
+        UserResponse response = authenticationService.register(request);
+
+        // Then
+        assertEquals("15551234567", response.getMobile());
+    }
+
+    @Test
+    @DisplayName("Should handle mobile with only whitespace as null")
+    void testRegister_MobileNormalization_OnlyWhitespace() {
+        // Given
+        RegisterRequest request = RegisterRequest.builder()
+                .fullName("Whitespace Test")
+                .email("whitespace@example.com")
+                .mobile("   ")  // Only whitespace
+                .password("SecureP@ss123")
+                .role("SENIOR")
+                .build();
+
+        when(userRepository.existsByEmail("whitespace@example.com")).thenReturn(false);
+        when(passwordService.encodePassword(anyString())).thenReturn("$2a$12$hashedPassword");
+        when(userRepository.save(any(User.class))).thenAnswer(invocation -> {
+            User user = invocation.getArgument(0);
+            user.setId("user123");
+            return user;
+        });
+
+        // When
+        UserResponse response = authenticationService.register(request);
+
+        // Then
+        assertNull(response.getMobile());  // Should be null, not empty string
+        verify(userRepository, never()).existsByMobile(anyString());
+    }
+
+    @Test
+    @DisplayName("Should reject ADMIN role case-insensitively")
+    void testRegister_AdminRole_CaseInsensitive_ThrowsException() {
+        // Given
+        RegisterRequest request = RegisterRequest.builder()
+                .fullName("Admin Attempt")
+                .email("admin@example.com")
+                .password("SecureP@ss123")
+                .role("admin")  // Lowercase
+                .build();
+
+        when(userRepository.existsByEmail(anyString())).thenReturn(false);
+
+        // When/Then
+        IllegalArgumentException exception = assertThrows(
+            IllegalArgumentException.class,
+            () -> authenticationService.register(request)
+        );
+
+        assertEquals("ADMIN role cannot be assigned through self-registration", 
+            exception.getMessage());
+    }
+
+    @Test
+    @DisplayName("Should accept role with different casing (SENIOR, senior, Senior)")
+    void testRegister_RoleCaseInsensitive_Success() {
+        // Given
+        RegisterRequest request = RegisterRequest.builder()
+                .fullName("Case Test User")
+                .email("case@example.com")
+                .password("SecureP@ss123")
+                .role("senior")  // Lowercase
+                .build();
+
+        when(userRepository.existsByEmail(anyString())).thenReturn(false);
+        when(passwordService.encodePassword(anyString())).thenReturn("$2a$12$hashedPassword");
+        when(userRepository.save(any(User.class))).thenAnswer(invocation -> {
+            User user = invocation.getArgument(0);
+            user.setId("user123");
+            return user;
+        });
+
+        // When
+        UserResponse response = authenticationService.register(request);
+
+        // Then
+        assertEquals(UserRole.SENIOR, response.getRole());
+    }
+
+    @Test
+    @DisplayName("Should reject null role")
+    void testRegister_NullRole_ThrowsException() {
+        // Given
+        RegisterRequest request = RegisterRequest.builder()
+                .fullName("Null Role User")
+                .email("nullrole@example.com")
+                .password("SecureP@ss123")
+                .role(null)
+                .build();
+
+        when(userRepository.existsByEmail(anyString())).thenReturn(false);
+
+        // When/Then
+        IllegalArgumentException exception = assertThrows(
+            IllegalArgumentException.class,
+            () -> authenticationService.register(request)
+        );
+
+        assertEquals("Role is required", exception.getMessage());
+    }
+
+    @Test
+    @DisplayName("Should reject blank role")
+    void testRegister_BlankRole_ThrowsException() {
+        // Given
+        RegisterRequest request = RegisterRequest.builder()
+                .fullName("Blank Role User")
+                .email("blankrole@example.com")
+                .password("SecureP@ss123")
+                .role("   ")
+                .build();
+
+        when(userRepository.existsByEmail(anyString())).thenReturn(false);
+
+        // When/Then
+        IllegalArgumentException exception = assertThrows(
+            IllegalArgumentException.class,
+            () -> authenticationService.register(request)
+        );
+
+        assertEquals("Role is required", exception.getMessage());
+    }
 }
