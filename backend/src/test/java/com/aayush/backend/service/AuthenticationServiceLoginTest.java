@@ -484,7 +484,8 @@ class AuthenticationServiceLoginTest {
                 .build();
 
         RefreshToken revokedToken = RefreshToken.builder()
-                .tokenHash("hash")
+                .id("original_token")
+                .tokenHash("acf74820831eb89bfd1ca7ec4b9d8c451142402fce2396227739f66e47d14eec")
                 .userId("user123")
                 .tokenFamilyId("family123")
                 .issuedAt(LocalDateTime.now().minusDays(1))
@@ -492,6 +493,7 @@ class AuthenticationServiceLoginTest {
                 .revoked(true)  // Already revoked
                 .revokedAt(LocalDateTime.now().minusHours(1))
                 .revocationReason("token_rotation")
+                .replacedByTokenId("replacement_token_id")  // KEY: This indicates completed rotation
                 .build();
 
         RefreshToken activeToken1 = RefreshToken.builder()

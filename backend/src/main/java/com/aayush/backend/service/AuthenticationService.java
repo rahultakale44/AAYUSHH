@@ -324,11 +324,40 @@ public class AuthenticationService {
             RefreshToken existingToken = refreshTokenRepository.findByTokenHash(tokenHash).orElse(null);
             
             if (existingToken != null && existingToken.isRevoked()) {
-                log.warn("Token reuse detected for token family: {}", existingToken.getTokenFamilyId());
+                String reason = existingToken.getRevocationReason();
                 
-                // Revoke entire token family
+                // Handle different revocation reasons
+                if ("consumed".equals(reason) || "token_rotation".equals(reason)) {
+                    // Token was consumed/rotated
+                    // This could be:
+                    // 1. Concurrent refresh attempt (two requests at the same time)
+                    // 2. Genuine reuse of an old rotated token
+                    
+                    // The key distinction: if replacedByTokenId is set, rotation completed
+                    if (existingToken.getReplacedByTokenId() != null) {
+                        // Rotation completed - this is genuine reuse of a rotated token
+                        // This means the client is trying to use an old token
+                        log.warn("Token reuse detected for token family: {} (previously rotated)", 
+                            existingToken.getTokenFamilyId());
+                        revokeTokenFamily(existingToken.getTokenFamilyId(), "suspicious_reuse");
+                        throw new AuthenticationException("Invalid refresh token");
+                    }
+                    
+                    // If replacedByTokenId is NOT set:
+                    // - Could be concurrent refresh attempt (atomic consumption won, update pending)
+                    // - Could be rotation in progress (rare timing issue)
+                    // Either way, deny the request WITHOUT revoking the family
+                    // The legitimate request already succeeded
+                    log.warn("Concurrent token consumption detected for family: {} - denying duplicate refresh", 
+                        existingToken.getTokenFamilyId());
+                    throw new AuthenticationException("Invalid refresh token");
+                }
+                
+                // Other revocation reasons (logout, suspicious_reuse, family_revoked)
+                // These are always suspicious if reused
+                log.warn("Attempt to reuse revoked token (reason: {}) for family: {}", 
+                    reason, existingToken.getTokenFamilyId());
                 revokeTokenFamily(existingToken.getTokenFamilyId(), "suspicious_reuse");
-                
                 throw new AuthenticationException("Invalid refresh token");
             }
             
@@ -367,13 +396,18 @@ public class AuthenticationService {
         // Save new token
         RefreshToken savedNewToken = refreshTokenRepository.save(newTokenEntity);
 
-        // Update old token with replacement link (best effort)
+        // Update old token with replacement link and revocation reason atomically
+        // This MUST happen before returning to minimize the window where the token
+        // appears as "consumed" without a replacement link
         try {
             consumedToken.setReplacedByTokenId(savedNewToken.getId());
+            consumedToken.setRevocationReason("token_rotation");
             refreshTokenRepository.save(consumedToken);
         } catch (Exception e) {
-            // Log but don't fail - replacement link is audit metadata, not critical for security
-            log.warn("Failed to update replacement link for token {}: {}", consumedToken.getId(), e.getMessage());
+            // If this fails, the new token is orphaned but the old token is still revoked
+            // This is a rare case but we should not fail the refresh
+            log.error("CRITICAL: Failed to update replacement link for consumed token {}: {}", 
+                consumedToken.getId(), e.getMessage());
         }
 
         // Generate new access token
@@ -404,7 +438,11 @@ public class AuthenticationService {
      * Update operation:
      * - Set revoked = true
      * - Set revokedAt = now
-     * - Set revocationReason = "token_rotation"
+     * - Set revocationReason = "consumed"
+     * 
+     * Note: The reason is "consumed" (not "token_rotation") because rotation is completed
+     * only after the replacement token is successfully created. If rotation fails after
+     * consumption, the token remains consumed with this reason.
      * 
      * @param tokenHash SHA-256 hash of the refresh token
      * @return RefreshToken if successfully consumed, null if already consumed or expired
@@ -418,11 +456,11 @@ public class AuthenticationService {
                 .and("revoked").is(false)
                 .and("expiresAt").gt(now));
         
-        // Build update: mark as revoked
+        // Build update: mark as consumed
         Update update = new Update()
                 .set("revoked", true)
                 .set("revokedAt", now)
-                .set("revocationReason", "token_rotation");
+                .set("revocationReason", "consumed");
         
         // Execute atomic findAndModify
         // Returns the document BEFORE the update (or null if no match)
@@ -437,7 +475,7 @@ public class AuthenticationService {
             // Update the returned object to reflect the changes (since findAndModify returns pre-update state)
             consumedToken.setRevoked(true);
             consumedToken.setRevokedAt(now);
-            consumedToken.setRevocationReason("token_rotation");
+            consumedToken.setRevocationReason("consumed");
         }
         
         return consumedToken;
