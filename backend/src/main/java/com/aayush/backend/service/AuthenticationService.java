@@ -19,6 +19,10 @@ import com.aayush.backend.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DuplicateKeyException;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
@@ -66,6 +70,7 @@ public class AuthenticationService {
     private final RefreshTokenRepository refreshTokenRepository;
     private final PasswordService passwordService;
     private final JwtService jwtService;
+    private final MongoTemplate mongoTemplate;
 
     // Refresh token configuration
     private static final int REFRESH_TOKEN_BYTES = 32;  // 256 bits
@@ -270,26 +275,25 @@ public class AuthenticationService {
      * 
      * Process:
      * 1. Hash the provided refresh token
-     * 2. Find stored token record
-     * 3. Validate token (not expired, not revoked)
+     * 2. Atomically consume the token (mark as revoked if not already revoked and not expired)
+     * 3. If consumption fails (already revoked), detect token reuse and revoke entire family
      * 4. Check user still exists and is ACTIVE
-     * 5. Detect token reuse (already revoked token used)
-     * 6. Revoke old token
-     * 7. Generate new refresh token
-     * 8. Store new token hash with same family ID
-     * 9. Generate new access token
-     * 10. Return TokenResponse
+     * 5. Generate new refresh token
+     * 6. Store new token hash with same family ID
+     * 7. Update old token with replacement link
+     * 8. Generate new access token
+     * 9. Return TokenResponse
      * 
      * Security:
+     * - Atomic token consumption prevents concurrent reuse
      * - Token reuse detection: revokes entire family if revoked token is reused
-     * - Atomic rotation prevents concurrent reuse
      * - Only SHA-256 hashes stored
      * - Generic error messages
      * 
-     * Limitation:
-     * - Concurrent refresh attempts with same token may succeed if timing is exact
-     * - MongoDB findByTokenHash + save is not atomic across documents
-     * - Consider using optimistic locking or versioning for production
+     * Concurrency:
+     * - Uses MongoDB findAndModify for atomic token consumption
+     * - Only ONE concurrent request can successfully consume a token
+     * - Losing requests trigger token reuse detection and family revocation
      * 
      * @param request Refresh token request
      * @return TokenResponse with new access and refresh tokens
@@ -309,31 +313,32 @@ public class AuthenticationService {
         // Hash the provided token
         String tokenHash = hashToken(request.getRefreshToken());
 
-        // Find stored token
-        RefreshToken storedToken = refreshTokenRepository.findByTokenHash(tokenHash)
-                .orElseThrow(() -> {
-                    log.warn("Token refresh failed: unknown token");
-                    return new AuthenticationException("Invalid refresh token");
-                });
+        // Atomically consume the token (find and mark as revoked in single operation)
+        RefreshToken consumedToken = atomicallyConsumeToken(tokenHash);
 
-        // Check if token is revoked (possible reuse attempt)
-        if (storedToken.isRevoked()) {
-            log.warn("Token reuse detected for token family: {}", storedToken.getTokenFamilyId());
+        // If null, token was already consumed (reuse detected) or doesn't exist
+        if (consumedToken == null) {
+            log.warn("Token consumption failed: checking for reuse scenario");
             
-            // Revoke entire token family
-            revokeTokenFamily(storedToken.getTokenFamilyId(), "suspicious_reuse");
+            // Check if token exists but is already revoked (reuse attempt)
+            RefreshToken existingToken = refreshTokenRepository.findByTokenHash(tokenHash).orElse(null);
             
+            if (existingToken != null && existingToken.isRevoked()) {
+                log.warn("Token reuse detected for token family: {}", existingToken.getTokenFamilyId());
+                
+                // Revoke entire token family
+                revokeTokenFamily(existingToken.getTokenFamilyId(), "suspicious_reuse");
+                
+                throw new AuthenticationException("Invalid refresh token");
+            }
+            
+            // Token doesn't exist at all
+            log.warn("Token refresh failed: unknown token");
             throw new AuthenticationException("Invalid refresh token");
         }
 
-        // Check if token is expired
-        if (storedToken.getExpiresAt().isBefore(LocalDateTime.now())) {
-            log.warn("Token refresh failed: token expired");
-            throw new AuthenticationException("Refresh token expired");
-        }
-
         // Find user
-        User user = userRepository.findById(storedToken.getUserId())
+        User user = userRepository.findById(consumedToken.getUserId())
                 .orElseThrow(() -> {
                     log.warn("Token refresh failed: user not found");
                     return new AuthenticationException("Invalid refresh token");
@@ -345,11 +350,6 @@ public class AuthenticationService {
             throw new AuthenticationException("Account is not available");
         }
 
-        // Revoke old token
-        storedToken.setRevoked(true);
-        storedToken.setRevokedAt(LocalDateTime.now());
-        storedToken.setRevocationReason("token_rotation");
-
         // Generate new refresh token
         String newRefreshToken = generateOpaqueToken();
         String newTokenHash = hashToken(newRefreshToken);
@@ -358,22 +358,23 @@ public class AuthenticationService {
         RefreshToken newTokenEntity = RefreshToken.builder()
                 .tokenHash(newTokenHash)
                 .userId(user.getId())
-                .tokenFamilyId(storedToken.getTokenFamilyId())  // Preserve family
+                .tokenFamilyId(consumedToken.getTokenFamilyId())  // Preserve family
                 .issuedAt(LocalDateTime.now())
                 .expiresAt(LocalDateTime.now().plusDays(REFRESH_TOKEN_VALIDITY_DAYS))
                 .revoked(false)
                 .build();
 
-        // Link old token to replacement
-        storedToken.setReplacedByTokenId(newTokenEntity.getId());
-
-        // Save both (not atomic - see limitation note)
-        refreshTokenRepository.save(storedToken);
+        // Save new token
         RefreshToken savedNewToken = refreshTokenRepository.save(newTokenEntity);
 
-        // Update link with actual saved ID
-        storedToken.setReplacedByTokenId(savedNewToken.getId());
-        refreshTokenRepository.save(storedToken);
+        // Update old token with replacement link (best effort)
+        try {
+            consumedToken.setReplacedByTokenId(savedNewToken.getId());
+            refreshTokenRepository.save(consumedToken);
+        } catch (Exception e) {
+            // Log but don't fail - replacement link is audit metadata, not critical for security
+            log.warn("Failed to update replacement link for token {}: {}", consumedToken.getId(), e.getMessage());
+        }
 
         // Generate new access token
         String newAccessToken = jwtService.generateAccessToken(user);
@@ -387,6 +388,59 @@ public class AuthenticationService {
                 .tokenType("Bearer")
                 .expiresIn((int) (jwtService.extractExpiration(newAccessToken).getTime() - System.currentTimeMillis()) / 1000)
                 .build();
+    }
+
+    /**
+     * Atomically consume a refresh token (mark as revoked)
+     * 
+     * Uses MongoDB findAndModify to ensure only ONE request can successfully consume a token.
+     * This prevents race conditions where two concurrent requests try to use the same token.
+     * 
+     * Query criteria (ALL must match):
+     * - tokenHash matches
+     * - revoked = false (not already consumed)
+     * - expiresAt > now (not expired)
+     * 
+     * Update operation:
+     * - Set revoked = true
+     * - Set revokedAt = now
+     * - Set revocationReason = "token_rotation"
+     * 
+     * @param tokenHash SHA-256 hash of the refresh token
+     * @return RefreshToken if successfully consumed, null if already consumed or expired
+     */
+    private RefreshToken atomicallyConsumeToken(String tokenHash) {
+        LocalDateTime now = LocalDateTime.now();
+        
+        // Build query: find non-revoked, non-expired token with matching hash
+        Query query = new Query();
+        query.addCriteria(Criteria.where("tokenHash").is(tokenHash)
+                .and("revoked").is(false)
+                .and("expiresAt").gt(now));
+        
+        // Build update: mark as revoked
+        Update update = new Update()
+                .set("revoked", true)
+                .set("revokedAt", now)
+                .set("revocationReason", "token_rotation");
+        
+        // Execute atomic findAndModify
+        // Returns the document BEFORE the update (or null if no match)
+        RefreshToken consumedToken = mongoTemplate.findAndModify(
+                query,
+                update,
+                RefreshToken.class
+        );
+        
+        if (consumedToken != null) {
+            log.debug("Successfully consumed token atomically");
+            // Update the returned object to reflect the changes (since findAndModify returns pre-update state)
+            consumedToken.setRevoked(true);
+            consumedToken.setRevokedAt(now);
+            consumedToken.setRevocationReason("token_rotation");
+        }
+        
+        return consumedToken;
     }
 
     /**

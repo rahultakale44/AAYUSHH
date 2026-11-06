@@ -50,6 +50,9 @@ class AuthenticationServiceLoginTest {
     @Mock
     private JwtService jwtService;
 
+    @Mock
+    private org.springframework.data.mongodb.core.MongoTemplate mongoTemplate;
+
     @InjectMocks
     private AuthenticationService authenticationService;
 
@@ -374,7 +377,9 @@ class AuthenticationServiceLoginTest {
                 .revoked(false)
                 .build();
 
-        when(refreshTokenRepository.findByTokenHash(anyString())).thenReturn(Optional.of(storedToken));
+        // Mock atomic consumption (mongoTemplate.findAndModify)
+        when(mongoTemplate.findAndModify(any(), any(), eq(RefreshToken.class)))
+                .thenReturn(storedToken);
         when(userRepository.findById("user123")).thenReturn(Optional.of(user));
         when(jwtService.generateAccessToken(user)).thenReturn("new.jwt.token");
         when(jwtService.extractExpiration("new.jwt.token")).thenReturn(
@@ -398,14 +403,12 @@ class AuthenticationServiceLoginTest {
         assertNotEquals(oldRefreshToken, response.getRefreshToken());
         assertEquals("Bearer", response.getTokenType());
 
-        // Verify old token was revoked
-        assertTrue(storedToken.isRevoked());
-        assertEquals("token_rotation", storedToken.getRevocationReason());
-        assertNotNull(storedToken.getRevokedAt());
+        // Verify atomic consumption was called
+        verify(mongoTemplate).findAndModify(any(), any(), eq(RefreshToken.class));
 
         // Verify new token was saved with same family
         ArgumentCaptor<RefreshToken> tokenCaptor = ArgumentCaptor.forClass(RefreshToken.class);
-        verify(refreshTokenRepository, atLeast(2)).save(tokenCaptor.capture());
+        verify(refreshTokenRepository, atLeastOnce()).save(tokenCaptor.capture());
         
         List<RefreshToken> savedTokens = tokenCaptor.getAllValues();
         RefreshToken newToken = savedTokens.stream()
@@ -426,6 +429,9 @@ class AuthenticationServiceLoginTest {
                 .refreshToken("unknown.token")
                 .build();
 
+        // Mock atomic consumption returns null (token doesn't exist)
+        when(mongoTemplate.findAndModify(any(), any(), eq(RefreshToken.class)))
+                .thenReturn(null);
         when(refreshTokenRepository.findByTokenHash(anyString())).thenReturn(Optional.empty());
 
         // When/Then
@@ -445,6 +451,10 @@ class AuthenticationServiceLoginTest {
                 .refreshToken("expired.token")
                 .build();
 
+        // Mock atomic consumption returns null (expired tokens don't match query criteria)
+        when(mongoTemplate.findAndModify(any(), any(), eq(RefreshToken.class)))
+                .thenReturn(null);
+        
         RefreshToken storedToken = RefreshToken.builder()
                 .tokenHash("hash")
                 .userId("user123")
@@ -462,7 +472,7 @@ class AuthenticationServiceLoginTest {
             () -> authenticationService.refresh(request)
         );
 
-        assertEquals("Refresh token expired", exception.getMessage());
+        assertEquals("Invalid refresh token", exception.getMessage());
     }
 
     @Test
@@ -500,6 +510,9 @@ class AuthenticationServiceLoginTest {
                 .revoked(false)
                 .build();
 
+        // Mock atomic consumption returns null (already revoked)
+        when(mongoTemplate.findAndModify(any(), any(), eq(RefreshToken.class)))
+                .thenReturn(null);
         when(refreshTokenRepository.findByTokenHash(anyString())).thenReturn(Optional.of(revokedToken));
         when(refreshTokenRepository.findByTokenFamilyIdAndRevoked("family123", false))
                 .thenReturn(Arrays.asList(activeToken1, activeToken2));
@@ -541,7 +554,9 @@ class AuthenticationServiceLoginTest {
                 .revoked(false)
                 .build();
 
-        when(refreshTokenRepository.findByTokenHash(anyString())).thenReturn(Optional.of(storedToken));
+        // Mock atomic consumption succeeds
+        when(mongoTemplate.findAndModify(any(), any(), eq(RefreshToken.class)))
+                .thenReturn(storedToken);
         when(userRepository.findById("user123")).thenReturn(Optional.of(user));
 
         // When/Then
@@ -570,7 +585,9 @@ class AuthenticationServiceLoginTest {
                 .revoked(false)
                 .build();
 
-        when(refreshTokenRepository.findByTokenHash(anyString())).thenReturn(Optional.of(storedToken));
+        // Mock atomic consumption succeeds
+        when(mongoTemplate.findAndModify(any(), any(), eq(RefreshToken.class)))
+                .thenReturn(storedToken);
         when(userRepository.findById("nonexistent")).thenReturn(Optional.empty());
 
         // When/Then
@@ -606,7 +623,9 @@ class AuthenticationServiceLoginTest {
                 .revoked(false)
                 .build();
 
-        when(refreshTokenRepository.findByTokenHash(anyString())).thenReturn(Optional.of(originalToken));
+        // Mock atomic consumption
+        when(mongoTemplate.findAndModify(any(), any(), eq(RefreshToken.class)))
+                .thenReturn(originalToken);
         when(userRepository.findById("user123")).thenReturn(Optional.of(user));
         when(jwtService.generateAccessToken(any())).thenReturn("jwt.token");
         when(jwtService.extractExpiration(anyString())).thenReturn(new java.util.Date(System.currentTimeMillis() + 900000));
@@ -625,7 +644,7 @@ class AuthenticationServiceLoginTest {
         assertNotNull(response);
 
         ArgumentCaptor<RefreshToken> tokenCaptor = ArgumentCaptor.forClass(RefreshToken.class);
-        verify(refreshTokenRepository, atLeast(2)).save(tokenCaptor.capture());
+        verify(refreshTokenRepository, atLeastOnce()).save(tokenCaptor.capture());
         
         // Find the new (non-revoked) token
         RefreshToken newToken = tokenCaptor.getAllValues().stream()
