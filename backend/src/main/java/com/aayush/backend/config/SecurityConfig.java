@@ -1,5 +1,7 @@
 package com.aayush.backend.config;
 
+import com.aayush.backend.filter.JwtAuthenticationFilter;
+import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -8,6 +10,7 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
@@ -17,12 +20,21 @@ import java.util.Arrays;
 /**
  * Security Configuration
  * 
- * For Milestone 3: Security is disabled to focus on core functionality
- * JWT authentication will be implemented in a later phase
+ * Phase 1.3: JWT authentication filter is now active
+ * - Processes Bearer tokens in Authorization header
+ * - Validates JWT signature, expiry, and issuer
+ * - Loads user from database and verifies ACTIVE status
+ * - Sets Spring Security authentication context
+ * 
+ * Authorization (role-based access control) will be implemented in Phase 1.5
+ * Currently all authenticated requests are permitted
  */
 @Configuration
 @EnableWebSecurity
+@RequiredArgsConstructor
 public class SecurityConfig {
+
+    private final JwtAuthenticationFilter jwtAuthenticationFilter;
 
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
@@ -31,8 +43,10 @@ public class SecurityConfig {
             .cors(cors -> cors.configurationSource(corsConfigurationSource()))
             .sessionManagement(session -> 
                 session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+            // Add JWT authentication filter before UsernamePasswordAuthenticationFilter
+            .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
             .authorizeHttpRequests(auth -> auth
-                .anyRequest().permitAll()  // Permit all for now
+                .anyRequest().permitAll()  // Permit all for now - authorization in Phase 1.5
             );
 
         return http.build();
